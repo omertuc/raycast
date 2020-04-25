@@ -8,6 +8,9 @@ import random
 from functools import lru_cache
 from math import sqrt, cos, sin, pi
 from typing import List
+import itertools
+from multiprocessing import Pool
+from functools import partial
 import tqdm
 
 
@@ -50,8 +53,8 @@ class App(QMainWindow):
         self.title = "PyQt paint - pythonspot.com"
         self.left = 10
         self.top = 10
-        self.width = 100  # 2560 // 2
-        self.height = 100  # 1440 - 35
+        self.width = 200  # 2560 // 2
+        self.height = 200  # 1440 - 35
         self.initUI()
 
     def initUI(self):
@@ -74,7 +77,7 @@ class App(QMainWindow):
         self.s3.move(0, 210)
         self.s3.resize(200, 30)
         self.s3.setMinimum(1)
-        self.s3.setMaximum(100)
+        self.s3.setMaximum(400)
         self.s3.setValue(35)
 
         def sd(value):
@@ -103,7 +106,7 @@ class App(QMainWindow):
         self.s5.resize(200, 30)
         self.s5.setMinimum(1)
         self.s5.setValue(25)
-        self.s5.setMaximum(100)
+        self.s5.setMaximum(500)
 
         def sf(value):
             self.m.fog = value
@@ -202,10 +205,10 @@ def _intersect_scene(vec, scene: Scene):
     return color, (factor * a, factor * b, factor * c)
 
 
-def _distance(vec1, vec2):
+def _distance_sq(vec1, vec2):
     (x1, y1, z1), (x2, y2, z2) = vec1, vec2
 
-    return sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2 + (z1 - z2) ** 2)
+    return (x1 - x2) ** 2 + (y1 - y2) ** 2 + (z1 - z2) ** 2
 
 
 class ViewPort:
@@ -224,6 +227,11 @@ class ViewPort:
         # Half the height up from the center gets us the top edge of the top-left pixel
         self.topleft_pixel_top = self.cz + self.vph / 2
 
+        self.pixel_centers = {
+            (x, y): self._get_pixel_center((x, y))
+            for x, y in itertools.product(range(width), range(height))
+        }
+
     def _get_pixel_center(self, pixel):
         # Half a pixel size from the pixel's top left corner gets us to the center
         pixel_center_correction = self.pixel_size / 2
@@ -237,18 +245,66 @@ class ViewPort:
         )
 
     def get_pixel_color(self, pixel):
-        pixel_center = self._get_pixel_center(pixel)
+        pixel_center = self.pixel_centers[pixel]
 
         color, sphere_intersection = _intersect_scene(pixel_center, self.scene)
 
         if sphere_intersection is None:
             return (0, 0, 0)
 
-        d = min(self.max_distance, _distance(sphere_intersection, pixel_center))
+        d = min(self.max_distance ** 2, _distance_sq(sphere_intersection, pixel_center))
 
         r, g, b = color
-        intensity = 1 - (d / self.max_distance)
+        intensity = 1 - (d / (self.max_distance ** 2))
         return (int(intensity * r), int(intensity * g), int(intensity * b))
+
+
+p = Pool(12)
+
+
+@lru_cache(maxsize=None)
+def gen_viewport(*args, **kwargs):
+    return ViewPort(*args, **kwargs)
+
+
+def gen_image(w, h, pixel_size, vp_distance, s_distance, s_r, fog, rot):
+    def to_rad(a):
+        return a * 2 * pi / 360
+
+    s1rot = to_rad(rot)
+    s3rot = to_rad(rot + 180)
+
+    s1 = Sphere(
+        center=(s_r * 2 * sin(s1rot), s_distance + s_r * 2 * cos(s1rot), 0,),
+        radius=s_r / 2,
+        color=(255, 0, 0),
+    )
+
+    s2 = Sphere(center=(0, s_distance, 0), radius=s_r, color=(0, 255, 0))
+
+    s3 = Sphere(
+        center=(s_r * 2 * sin(s3rot), s_distance + s_r * 2 * cos(s3rot), 0,),
+        radius=s_r / 2,
+        color=(0, 0, 255),
+    )
+
+    scene = Scene([s1, s2, s3])
+
+    print(f"{s_distance=} {s_r=} {fog=}")
+
+    vp = gen_viewport((0, 0, 0), (0, vp_distance, 0), pixel_size, w, h, scene, fog)
+
+    colors = []
+    for y in range(h):
+        for x in range(w):
+            colors += vp.get_pixel_color((x, y))
+
+    return colors
+
+    # global p
+    # return sum(
+    #     map(vp.get_pixel_color, itertools.product(range(h), range(w))), tuple()
+    # )
 
 
 class PaintWidget(QLabel):
@@ -267,53 +323,23 @@ class PaintWidget(QLabel):
         self.setMinimumSize(1, 1)
 
     def refreshImage(self):
-
-        size = self.size()
-        w = size.width()
-        h = size.height()
-
-        def to_rad(a):
-            return a * 2 * pi / 360
-
-        s1rot = to_rad(self.rot)
-        s3rot = to_rad(self.rot + 180)
-
-        s1 = Sphere(
-            center=(
-                self.s_distance * 2, # * sin(s1rot),
-                self.s_distance, #+ self.s_distance * 2 * cos(s1rot),
-                0,
-            ),
-            radius=self.s_r,
-            color=(255, 0, 0),
+        colors = gen_image(
+            self.size().width(),
+            self.size().height(),
+            self.pixel_size,
+            self.vp_distance,
+            self.s_distance,
+            self.s_r,
+            self.fog,
+            self.rot,
         )
 
-        s2 = Sphere(center=(0, self.s_distance, 0), radius=self.s_r, color=(0, 255, 0))
-
-        s3 = Sphere(
-            center=(
-                self.s_distance * -2, # * sin(s3rot),
-                self.s_distance, #+ self.s_distance * 2 * cos(s3rot),
-                0,
-            ),
-            radius=self.s_r,
-            color=(0, 0, 255),
+        img = QImage(
+            bytes(colors),
+            self.size().width(),
+            self.size().height(),
+            QImage.Format_RGB888,
         )
-
-        scene = Scene([s1, s2, s3])
-
-        print(f"{self.s_distance=} {self.s_r=} {self.fog=}")
-
-        vp = ViewPort(
-            (0, 0, 0), (0, self.vp_distance, 0), self.pixel_size, w, h, scene, self.fog
-        )
-
-        colors = []
-        for y in range(h):
-            for x in range(w):
-                colors.extend(vp.get_pixel_color((x, y)))
-
-        img = QImage(bytes(colors), w, h, QImage.Format_RGB888)
 
         self.setPixmap(QtGui.QPixmap.fromImage(img))
 
