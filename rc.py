@@ -6,7 +6,7 @@ from PyQt5 import QtGui, QtCore
 from PyQt5.QtCore import Qt, pyqtSignal
 import random
 from functools import lru_cache
-from math import sqrt
+from math import sqrt, cos, sin, pi
 from typing import List
 import tqdm
 
@@ -70,62 +70,61 @@ class App(QMainWindow):
         self.m.move(0, 0)
         self.m.resize(self.width, self.height)
 
-        # Add paint widget and paint
-        self.s = DoubleSlider(Qt.Horizontal, self)
-        self.s.move(0, 120)
-        self.s.resize(200, 30)
-        self.s.setMinimum(0.01)
-        self.s.setMaximum(1)
-        self.s.setValue(0.096)
-
-        def ps(value):
-            self.m.pixel_size = value
-            self.m.refreshImage()
-            self.m.show()
-
-        self.s.doubleValueChanged[float].connect(ps)
-
-        self.s2 = DoubleSlider(Qt.Horizontal, self)
-        self.s2.move(0, 150)
-        self.s2.resize(200, 30)
-        self.s2.setMinimum(0.01)
-        self.s2.setMaximum(5)
-        self.s2.setValue(4.214)
-
-        def vp(value):
-            self.m.vp_distance = value
-            self.m.refreshImage()
-            self.m.show()
-
-        self.s2.doubleValueChanged[float].connect(vp)
-
         self.s3 = QSlider(Qt.Horizontal, self)
-        self.s3.move(0, 180)
+        self.s3.move(0, 210)
         self.s3.resize(200, 30)
         self.s3.setMinimum(1)
         self.s3.setMaximum(100)
         self.s3.setValue(35)
 
-        def s2d(value):
+        def sd(value):
             self.m.s_distance = value
             self.m.refreshImage()
             self.m.show()
 
-        self.s3.valueChanged[int].connect(s2d)
+        self.s3.valueChanged[int].connect(sd)
 
         self.s4 = QSlider(Qt.Horizontal, self)
-        self.s4.move(0, 210)
+        self.s4.move(0, 240)
         self.s4.resize(200, 30)
         self.s4.setMinimum(1)
         self.s4.setValue(25)
         self.s4.setMaximum(100)
 
-        def s2r(value):
+        def sr(value):
             self.m.s_r = value
             self.m.refreshImage()
             self.m.show()
 
-        self.s4.valueChanged[int].connect(s2r)
+        self.s4.valueChanged[int].connect(sr)
+
+        self.s5 = QSlider(Qt.Horizontal, self)
+        self.s5.move(0, 270)
+        self.s5.resize(200, 30)
+        self.s5.setMinimum(1)
+        self.s5.setValue(25)
+        self.s5.setMaximum(100)
+
+        def sf(value):
+            self.m.fog = value
+            self.m.refreshImage()
+            self.m.show()
+
+        self.s5.valueChanged[int].connect(sf)
+
+        self.s6 = QSlider(Qt.Horizontal, self)
+        self.s6.move(0, 300)
+        self.s6.resize(200, 30)
+        self.s6.setMinimum(0)
+        self.s6.setValue(25)
+        self.s6.setMaximum(360)
+
+        def sr(value):
+            self.m.rot = value
+            self.m.refreshImage()
+            self.m.show()
+
+        self.s6.valueChanged[int].connect(sr)
 
         self.show()
 
@@ -252,22 +251,14 @@ class ViewPort:
         return (int(intensity * r), int(intensity * g), int(intensity * b))
 
 
-def get_qcolor(r, g, b):
-    return QColor(r, g, b)
-
-
-@lru_cache(maxsize=None)
-def grayscale_qcolor(g):
-    return get_qcolor(g, g, g)
-
-
 class PaintWidget(QLabel):
     def __init__(self, *args, **kwargs):
-        self.pixel_size = 0.005
-        self.vp_distance = 0.1
-        self.s_distance = 30
-        self.s_r = 30
-        self.fog = 15
+        self.pixel_size = 0.01
+        self.vp_distance = 35
+        self.s_distance = 25
+        self.s_r = 25
+        self.fog = 25
+        self.rot = 1
 
         super().__init__(*args, **kwargs)
 
@@ -281,25 +272,37 @@ class PaintWidget(QLabel):
         w = size.width()
         h = size.height()
 
+        def to_rad(a):
+            return a * 2 * pi / 360
+
+        s1rot = to_rad(self.rot)
+        s3rot = to_rad(self.rot + 180)
+
         s1 = Sphere(
-            center=(0, self.s_distance, self.s_r),
+            center=(
+                self.s_distance * 2, # * sin(s1rot),
+                self.s_distance, #+ self.s_distance * 2 * cos(s1rot),
+                0,
+            ),
             radius=self.s_r,
             color=(255, 0, 0),
         )
 
-        s2 = Sphere(
-            center=(0, self.s_distance, 0), radius=self.s_r, color=(0, 255, 0)
-        )
+        s2 = Sphere(center=(0, self.s_distance, 0), radius=self.s_r, color=(0, 255, 0))
 
         s3 = Sphere(
-            center=(0, self.s_distance, self.s_r),
+            center=(
+                self.s_distance * -2, # * sin(s3rot),
+                self.s_distance, #+ self.s_distance * 2 * cos(s3rot),
+                0,
+            ),
             radius=self.s_r,
             color=(0, 0, 255),
         )
 
         scene = Scene([s1, s2, s3])
 
-        print(self.pixel_size, self.vp_distance, self.s_distance, self.s_r)
+        print(f"{self.s_distance=} {self.s_r=} {self.fog=}")
 
         vp = ViewPort(
             (0, 0, 0), (0, self.vp_distance, 0), self.pixel_size, w, h, scene, self.fog
